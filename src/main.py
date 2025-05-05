@@ -1,5 +1,6 @@
 # src/main.py
 import os
+import sys
 from block_markdown import markdown_to_html_node, extract_title
 
 # --- Custom Recursive Removal ---
@@ -69,78 +70,56 @@ def copy_directory_recursive(src_path, dest_path):
         elif os.path.isdir(full_src_path):
             copy_directory_recursive(full_src_path, full_dest_path) # Recursive call
 
-def generate_page(from_path, template_path, dest_path):
+def generate_page(from_path, template_path, dest_path, basepath="/"): # Add basepath argument
     """
     Generates an HTML page from a Markdown file using a template.
-
-    Args:
-        from_path (str): Path to the source Markdown file.
-        template_path (str): Path to the HTML template file.
-        dest_path (str): Path where the generated HTML file will be saved.
+    Replaces root-relative paths with the provided basepath.
     """
-    print(f"Generating page from {from_path} to {dest_path} using {template_path}")
+    print(f"Generating page from {from_path} to {dest_path} using {template_path} (basepath: {basepath})")
 
-    # 1. Read Markdown file
+    # ... (Read markdown_content and template_content as before) ...
     try:
-        with open(from_path, 'r', encoding='utf-8') as f:
-            markdown_content = f.read()
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Markdown source file not found: {from_path}")
-    except Exception as e:
-        raise Exception(f"Error reading Markdown file {from_path}: {e}")
-
-    # 2. Read Template file
+        with open(from_path, 'r', encoding='utf-8') as f: markdown_content = f.read()
+    except FileNotFoundError: raise FileNotFoundError(f"Markdown source file not found: {from_path}")
+    except Exception as e: raise Exception(f"Error reading Markdown file {from_path}: {e}")
     try:
-        with open(template_path, 'r', encoding='utf-8') as f:
-            template_content = f.read()
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Template file not found: {template_path}")
-    except Exception as e:
-        raise Exception(f"Error reading template file {template_path}: {e}")
+        with open(template_path, 'r', encoding='utf-8') as f: template_content = f.read()
+    except FileNotFoundError: raise FileNotFoundError(f"Template file not found: {template_path}")
+    except Exception as e: raise Exception(f"Error reading template file {template_path}: {e}")
 
-    # 3. Convert Markdown to HTML
     html_node = markdown_to_html_node(markdown_content)
     html_content = html_node.to_html()
-
-    # 4. Extract Title
     try:
         title = extract_title(markdown_content)
-    except ValueError as e:
-        raise ValueError(f"Could not extract title from {from_path}: {e}")
+    except ValueError as e: raise ValueError(f"Could not extract title from {from_path}: {e}")
 
-    # 5. Replace placeholders
+    # Replace placeholders
     final_html = template_content.replace("{{ Title }}", title)
     final_html = final_html.replace("{{ Content }}", html_content)
 
-    # 6. Write the new HTML to dest_path
-    # Ensure destination directory exists
+    # --- Replace root-relative paths with basepath ---
+    # Important: Only replace paths starting with "/" that are NOT part of absolute URLs
+    # This simple replace works for href="/..." and src="/..."
+    final_html = final_html.replace('href="/', f'href="{basepath}')
+    final_html = final_html.replace('src="/', f'src="{basepath}')
+    # -------------------------------------------------
+
+    # Write the new HTML to dest_path
     dest_dir = os.path.dirname(dest_path)
-    if dest_dir: # Only create if path includes a directory
-        os.makedirs(dest_dir, exist_ok=True)
-
+    if dest_dir: os.makedirs(dest_dir, exist_ok=True)
     try:
-        with open(dest_path, 'w', encoding='utf-8') as f:
-            f.write(final_html)
-        print(f"  Successfully wrote page to {dest_path}")
-    except Exception as e:
-        raise Exception(f"Error writing HTML file to {dest_path}: {e}")
+        with open(dest_path, 'w', encoding='utf-8') as f: f.write(final_html)
+    except Exception as e: raise Exception(f"Error writing HTML file to {dest_path}: {e}")
 
-def generate_pages_recursive(dir_path_content, template_path, dest_dir_path):
+def generate_pages_recursive(dir_path_content, template_path, dest_dir_path, basepath="/"): # Add basepath argument
     """
     Recursively generates HTML pages from Markdown files in a source directory
-    to a destination directory using a template.
-
-    Args:
-        dir_path_content (str): Path to the current content directory being processed.
-        template_path (str): Path to the HTML template file.
-        dest_dir_path (str): Path to the corresponding destination directory.
+    to a destination directory using a template, applying the basepath.
     """
     if not os.path.isdir(dir_path_content):
-        print(f"Warning: Content path '{dir_path_content}' is not a directory. Skipping.")
+        # print(f"Warning: Content path '{dir_path_content}' is not a directory. Skipping.")
         return
 
-    # print(f"Processing directory: {dir_path_content} -> {dest_dir_path}")
-    # Ensure destination directory exists for the current level
     os.makedirs(dest_dir_path, exist_ok=True)
 
     items = os.listdir(dir_path_content)
@@ -149,58 +128,69 @@ def generate_pages_recursive(dir_path_content, template_path, dest_dir_path):
         full_dest_path = os.path.join(dest_dir_path, item)
 
         if os.path.isfile(full_src_path):
-            # Check if it's a Markdown file
             if item.lower().endswith(".md"):
-                # Calculate destination HTML path
                 base_name, _ = os.path.splitext(item)
                 dest_html_path = os.path.join(dest_dir_path, f"{base_name}.html")
                 try:
-                    generate_page(full_src_path, template_path, dest_html_path)
+                    # Pass basepath down to generate_page
+                    generate_page(full_src_path, template_path, dest_html_path, basepath)
                 except Exception as e:
                     print(f"Error generating page for {full_src_path}: {e}")
-            # else: Ignore non-markdown files in content dir
         elif os.path.isdir(full_src_path):
-            # Recursively process subdirectory
-            # Destination path for subdirectory is already calculated as full_dest_path
-            generate_pages_recursive(full_src_path, template_path, full_dest_path)
-        # else: Ignore other types
+            # Pass basepath down recursively
+            generate_pages_recursive(full_src_path, template_path, full_dest_path, basepath)
 
 
 # --- Main Function ---
 def main():
+    # --- Determine Base Path from CLI argument ---
+    basepath = "/" # Default base path
+    if len(sys.argv) > 1:
+        basepath = sys.argv[1]
+        # Ensure basepath starts and ends with / unless it's just "/"
+        if not basepath.startswith("/"):
+             basepath = "/" + basepath
+        if basepath != "/" and not basepath.endswith("/"):
+             basepath += "/"
+    print(f"Using basepath: {basepath}")
+    # --------------------------------------------
+
     print("Starting static site generation...")
 
     static_dir = "static"
     content_dir = "content"
     template_path = "template.html"
-    public_dir = "public"
+    # --- Change output directory to 'docs' ---
+    output_dir = "docs"
+    # -----------------------------------------
 
-    # Clean public directory
-    print(f"\nCleaning destination directory: {public_dir}...")
-    remove_directory_recursive(public_dir)
+    # Clean output directory
+    print(f"\nCleaning destination directory: {output_dir}...")
+    remove_directory_recursive(output_dir) # Use the updated variable
     try:
-        os.mkdir(public_dir)
-        print(f"  Created empty directory: {public_dir}")
+        os.mkdir(output_dir) # Use the updated variable
+        print(f"  Created empty directory: {output_dir}")
     except OSError as e:
-        print(f"  Error creating directory {public_dir}: {e}")
+        print(f"  Error creating directory {output_dir}: {e}")
         return
 
     # Copy static files
-    print(f"\nCopying static files from {static_dir} to {public_dir}...")
+    print(f"\nCopying static files from {static_dir} to {output_dir}...")
     if os.path.exists(static_dir) and os.path.isdir(static_dir):
-        copy_directory_recursive(static_dir, public_dir)
+        copy_directory_recursive(static_dir, output_dir) # Use the updated variable
         print(f"  Finished copying static files.")
     else:
         print(f"  Warning: Static directory '{static_dir}' not found or is not a directory. Skipping copy.")
 
-    # --- Generate content pages recursively ---
+    # Generate content pages recursively
     print(f"\nGenerating content pages from {content_dir}...")
     try:
-        # Call the new recursive function starting at the root content/public dirs
+        # Pass the determined basepath to the recursive function
         generate_pages_recursive(
             content_dir,
             template_path,
-            public_dir
+            output_dir, # Use the updated variable
+            basepath    # Pass the basepath
         )
         print("  Finished generating content pages.")
     except Exception as e:
